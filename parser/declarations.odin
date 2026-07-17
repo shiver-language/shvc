@@ -16,6 +16,7 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "core:fmt"
@@ -25,6 +26,8 @@ import "tokens"
 // name ( args ) -> type
 // args as in name : type , name : type , ...
 parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "function declaration error"
+
 	fn := ast.Fn_Decl{}
 	args_ptr := new([dynamic]ast.Type_Pair, arena)
 	args_ptr^ = make([dynamic]ast.Type_Pair, arena)
@@ -35,12 +38,14 @@ parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 	start := first_tok_spanned.span.start
 
 	first_tok, idok := first_tok_spanned.kind.(tokens.Identifier)
-	if !idok do panic("expected function or method name")
+	if !idok do error.print_error(tokenizer.source, first_tok_spanned.span, err_name, "expected function or method name", should_panic = true)
 
+	// TODO: consider whether defining methods with fn struct.method() is a good idea
 	if _, has_dot := peek_token(tokenizer, arena).kind.(tokens.Dot); has_dot {
 		next_token(tokenizer, arena) // consume .
-		method_tok, mok := next_token(tokenizer, arena).kind.(tokens.Identifier)
-		if !mok do panic("expected method name after '.'")
+		method_tok_raw := next_token(tokenizer, arena)
+		method_tok, mok := method_tok_raw.kind.(tokens.Identifier)
+		if !mok do error.print_error(tokenizer.source, method_tok_raw.span, err_name, "expected method name after '.'", should_panic = true)
 
 		// combine them into a single string identifier
 		// this sound like a bandaid solution
@@ -51,8 +56,15 @@ parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 	}
 
 	// consume (
-	if _, ntok := next_token(tokenizer, arena).kind.(tokens.Open_Paren); !ntok {
-		panic("expected '('")
+	raw_tok := next_token(tokenizer, arena)
+	if _, ntok := raw_tok.kind.(tokens.Open_Paren); !ntok {
+		error.print_error(
+			tokenizer.source,
+			raw_tok.span,
+			err_name,
+			"expected '('",
+			should_panic = true,
+		)
 	}
 
 	end_token := peek_token(tokenizer, arena)
@@ -70,10 +82,18 @@ parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 			}
 
 			arg_name_tok, name_ok := tok.kind.(tokens.Identifier)
-			if !name_ok do panic("expected argument name")
+			if !name_ok do error.print_error(tokenizer.source, tok.span, err_name, "expected argument name", should_panic = true)
 
-			if _, colok := next_token(tokenizer, arena).kind.(tokens.Colon); !colok {
-				panic("expected ':'")
+
+			raw_tok = next_token(tokenizer, arena)
+			if _, colok := raw_tok.kind.(tokens.Colon); !colok {
+				error.print_error(
+					tokenizer.source,
+					raw_tok.span,
+					err_name,
+					"expected ':'",
+					should_panic = true,
+				)
 			}
 
 			arg_type := parse_type(tokenizer, arena)
@@ -91,7 +111,13 @@ parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 				end_token = sep
 				break arg_loop
 			case:
-				panic("expected ',' or ')'")
+				error.print_error(
+					tokenizer.source,
+					sep.span,
+					err_name,
+					"expected ',' or ')'",
+					should_panic = true,
+				)
 			}
 		}
 	}
@@ -120,13 +146,22 @@ parse_fn_signature :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 }
 
 parse_trait_decl :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "trait declaration error"
+
 	name_spanned := next_token(tokenizer, arena)
 	name_tok, idok := name_spanned.kind.(tokens.Identifier)
-	if !idok do panic("expected trait name")
+	if !idok do error.print_error(tokenizer.source, name_spanned.span, err_name, "expected trait name", should_panic = true)
 	start := name_spanned.span.start
 
-	if _, obok := next_token(tokenizer, arena).kind.(tokens.Open_Bracket); !obok {
-		panic("expected '{' after trait name")
+	raw_tok := next_token(tokenizer, arena)
+	if _, obok := raw_tok.kind.(tokens.Open_Bracket); !obok {
+		error.print_error(
+			tokenizer.source,
+			raw_tok.span,
+			err_name,
+			"expected '{' after trait name",
+			should_panic = true,
+		)
 	}
 
 	methods_ptr := new([dynamic]ast.Spanned_AST, arena)
@@ -153,7 +188,13 @@ parse_trait_decl :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^as
 			continue
 
 		case:
-			panic("expected method declaration or '}' inside trait body")
+			error.print_error(
+				tokenizer.source,
+				tok.span,
+				err_name,
+				"expected method declaration or '}' inside trait body",
+				should_panic = true,
+			)
 		}
 	}
 
@@ -175,19 +216,29 @@ parse_struct_signature :: proc(
 	tokenizer: ^Tokenizer,
 	arena: runtime.Allocator,
 ) -> ast.Struct_Decl {
+	err_name :: "struct declaration error"
+
 	structure := ast.Struct_Decl{}
 
 	fields_ptr := new([dynamic]ast.Type_Pair, arena)
 	fields_ptr^ = make([dynamic]ast.Type_Pair, arena)
 	structure.fields = fields_ptr
 
-	name_tok, idok := next_token(tokenizer, arena).kind.(tokens.Identifier)
-	if !idok do panic("expected struct name")
+	name_tok_raw := next_token(tokenizer, arena)
+	name_tok, idok := name_tok_raw.kind.(tokens.Identifier)
+	if !idok do error.print_error(tokenizer.source, name_tok_raw.span, err_name, "expected struct name", should_panic = true)
 
 	structure.name = name_tok.content
 
-	if _, obok := next_token(tokenizer, arena).kind.(tokens.Open_Bracket); !obok {
-		panic("expected '{'")
+	raw_tok := next_token(tokenizer, arena)
+	if _, obok := raw_tok.kind.(tokens.Open_Bracket); !obok {
+		error.print_error(
+			tokenizer.source,
+			raw_tok.span,
+			err_name,
+			"expected '{'",
+			should_panic = true,
+		)
 	}
 
 	for {
@@ -200,15 +251,25 @@ parse_struct_signature :: proc(
 			break
 		}
 
-		field_name_tok, fidok := next_token(tokenizer, arena).kind.(tokens.Identifier)
-		if !fidok do panic("expected field name")
+		field_name_tok_raw := next_token(tokenizer, arena)
+		field_name_tok, fidok := field_name_tok_raw.kind.(tokens.Identifier)
+		if !fidok do error.print_error(tokenizer.source, field_name_tok_raw.span, err_name, "expected field name", should_panic = true)
 
-		if _, ok := next_token(tokenizer, arena).kind.(tokens.Colon); !ok {
-			panic("expected ':'")
+		raw_tok = next_token(tokenizer, arena)
+		if _, ok := raw_tok.kind.(tokens.Colon); !ok {
+			error.print_error(
+				tokenizer.source,
+				raw_tok.span,
+				err_name,
+				"expected ':'",
+				should_panic = true,
+			)
 		}
 
-		field_type_tok, fok := next_token(tokenizer, arena).kind.(tokens.Identifier)
-		if !fok do panic("expected field type")
+
+		raw_tok = next_token(tokenizer, arena)
+		field_type_tok, fok := raw_tok.kind.(tokens.Identifier)
+		if !fok do error.print_error(tokenizer.source, raw_tok.span, err_name, "expected field type", should_panic = true)
 
 		append(
 			structure.fields,
@@ -226,7 +287,13 @@ parse_struct_signature :: proc(
 		case tokens.Close_Bracket:
 			break
 		case:
-			panic("expected ',' or '}'")
+			error.print_error(
+				tokenizer.source,
+				sep.span,
+				err_name,
+				"expected ',' or '}'",
+				should_panic = true,
+			)
 		}
 	}
 
@@ -234,6 +301,8 @@ parse_struct_signature :: proc(
 }
 
 parse_var_decl :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "variable declaration error"
+
 	token := next_token(tokenizer, arena)
 	is_mutable := false
 	start := token.span.start
@@ -246,16 +315,31 @@ parse_var_decl :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.
 
 	// next token is val
 	if _, ok := token.kind.(tokens.Val); !ok {
-		panic("expected 'val' keyword in variable declaration")
+		error.print_error(
+			tokenizer.source,
+			token.span,
+			err_name,
+			"expected 'val' keyword",
+			should_panic = true,
+		)
 	}
 
 	// grab the var name
-	name_tok, varnameok := next_token(tokenizer, arena).kind.(tokens.Identifier)
-	if !varnameok do panic("expected variable name identifier")
+	raw_name_tok := next_token(tokenizer, arena)
+	name_tok, varnameok := raw_name_tok.kind.(tokens.Identifier)
+	if !varnameok do error.print_error(tokenizer.source, raw_name_tok.span, err_name, "expected variable name to be an identifier", should_panic = true)
+
 
 	// a : for type
-	if _, colok := next_token(tokenizer, arena).kind.(tokens.Colon); !colok {
-		panic("expected ':' after variable name")
+	raw_tkn := next_token(tokenizer, arena)
+	if _, colok := raw_tkn.kind.(tokens.Colon); !colok {
+		error.print_error(
+			tokenizer.source,
+			raw_tkn.span,
+			err_name,
+			"expected ':' after variable name",
+			should_panic = true,
+		)
 	}
 
 	// type parsing
@@ -301,4 +385,3 @@ parse_var_decl :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.
 
 	return node
 }
-
