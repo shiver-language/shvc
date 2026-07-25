@@ -39,7 +39,7 @@ parse_program :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.S
 	stack.push(&scope_stack, root_block_node)
 
 	for {
-		status, _ := parse_statement_into_current_scope(tokenizer, arena, &scope_stack, true)
+		status := parse_statement_into_current_scope(tokenizer, arena, &scope_stack, true)
 
 		if status == .Done {
 			break
