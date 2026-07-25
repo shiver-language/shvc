@@ -16,6 +16,7 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "stack"
@@ -26,6 +27,8 @@ parse_expression :: proc(
 	arena: runtime.Allocator,
 	allow_struct_literal: bool = true,
 ) -> ^ast.Spanned_AST {
+	err_name :: "expression error"
+
 	operator_stack := stack.make_stack(Op_Item, context.temp_allocator)
 	operand_stack := stack.make_stack(^ast.Spanned_AST, context.temp_allocator)
 
@@ -50,7 +53,9 @@ parse_expression :: proc(
 
 				// get type node that is just parsed
 				type_node, ok := stack.pop(&operand_stack)
-				if !ok do panic("compiler error: expecting_op true but operand stack empty")
+				if !ok {
+					panic("compiler error: expecting_op true but operand stack empty")
+				}
 
 				// parse content inside
 				literal_node := parse_typed_braced_literal(tokenizer, arena, type_node)
@@ -100,7 +105,13 @@ parse_expression :: proc(
 						case tokens.Close_Paren:
 							break
 						case:
-							panic("expected ',' or ')' in argument list")
+							error.print_error(
+								tokenizer.source,
+								sep.span,
+								err_name,
+								"expected ',' or ')' in argument list",
+								should_panic = true,
+							)
 						}
 						break
 					}
@@ -109,7 +120,7 @@ parse_expression :: proc(
 				}
 
 				call_node.kind = ast.Call {
-					target = create_leaf_node(token, arena),
+					target = create_leaf_node(token, arena, tokenizer),
 					args   = args_list,
 				}
 				call_node.span = tokens.Span {
@@ -118,7 +129,7 @@ parse_expression :: proc(
 				}
 				operand = call_node
 			} else {
-				operand = create_leaf_node(token, arena)
+				operand = create_leaf_node(token, arena, tokenizer)
 			}
 
 			operand = parse_postfix_expr(tokenizer, arena, operand)
@@ -132,7 +143,7 @@ parse_expression :: proc(
 				break outer
 			}
 
-			operand := create_leaf_node(token, arena)
+			operand := create_leaf_node(token, arena, tokenizer)
 			operand = parse_postfix_expr(tokenizer, arena, operand)
 
 			stack.push(&operand_stack, operand)
@@ -141,7 +152,15 @@ parse_expression :: proc(
 		case tokens.Caret:
 			if expecting_op {
 				operand, ok := stack.pop(&operand_stack)
-				if !ok do panic("internal parser error: operand stack empty for postfix dereference")
+				if !ok {
+					error.print_error(
+						tokenizer.source,
+						token.span,
+						err_name,
+						"internal parser error: operand stack empty for postfix dereference",
+						should_panic = true,
+					)
+				}
 
 				stack.push(&operand_stack, create_unary_node(token, operand, arena))
 				expecting_op = true
@@ -174,11 +193,11 @@ parse_expression :: proc(
 				top, _ := stack.peek(&operator_stack)
 				if _, ok := top.token.kind.(tokens.Open_Paren); ok do break
 
-				top_prec := precedence(top)
-				cur_prec := precedence(Op_Item{token = token, is_unary = false})
+				top_prec := precedence(top, tokenizer)
+				cur_prec := precedence(Op_Item{token = token, is_unary = false}, tokenizer)
 
 				if top_prec > cur_prec || (!is_right_assoc(token) && top_prec == cur_prec) {
-					apply_operator(&operator_stack, &operand_stack, arena)
+					apply_operator(&operator_stack, &operand_stack, arena, tokenizer)
 					continue
 				}
 				break
@@ -187,11 +206,27 @@ parse_expression :: proc(
 			expecting_op = false
 
 		case tokens.As, tokens.As_Bang:
-			if !expecting_op do panic("unexpected cast operator without left-hand side expression")
+			if !expecting_op {
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"unexpected cast operator without left-hand side expression",
+					should_panic = true,
+				)
+			}
 
 			// pop the lhs we casting rn
 			left, ok := stack.pop(&operand_stack)
-			if !ok do panic("missing left operand for cast")
+			if !ok {
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"missing left operand for cast",
+					should_panic = true,
+				)
+			}
 
 			// we gotta see what type it is dont we
 			target_type := parse_type(tokenizer, arena)
@@ -209,7 +244,7 @@ parse_expression :: proc(
 			}
 
 			stack.push(&operand_stack, node)
-			expecting_op = true // cast expression acts as a completed operand phrase
+			expecting_op = true
 
 		// expecting_op remains false here cuz unary ops
 		case tokens.Assign,
@@ -224,17 +259,25 @@ parse_expression :: proc(
 		     tokens.Less,
 		     tokens.Greater:
 			// binary opts
-			if !expecting_op do panic("unexpected binary operator")
+			if !expecting_op {
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"unexpected binary operator",
+					should_panic = true,
+				)
+			}
 
 			for !stack.is_empty(&operator_stack) {
 				top, _ := stack.peek(&operator_stack)
 				if _, ok := top.token.kind.(tokens.Open_Paren); ok do break
 
-				top_prec := precedence(top)
-				cur_prec := precedence(Op_Item{token = token, is_unary = false})
+				top_prec := precedence(top, tokenizer)
+				cur_prec := precedence(Op_Item{token = token, is_unary = false}, tokenizer)
 
 				if top_prec > cur_prec || (!is_right_assoc(token) && top_prec == cur_prec) {
-					apply_operator(&operator_stack, &operand_stack, arena)
+					apply_operator(&operator_stack, &operand_stack, arena, tokenizer)
 					continue
 				}
 				break
@@ -253,7 +296,15 @@ parse_expression :: proc(
 			expecting_op = true // closed paren
 
 		case tokens.Close_Paren:
-			if !expecting_op do panic("unexpected ')'")
+			if !expecting_op {
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"unexpected ')'",
+					should_panic = true,
+				)
+			}
 			open_paren_count -= 1
 			found_open := false
 
@@ -265,10 +316,18 @@ parse_expression :: proc(
 					found_open = true
 					break
 				}
-				apply_operator(&operator_stack, &operand_stack, arena)
+				apply_operator(&operator_stack, &operand_stack, arena, tokenizer)
 			}
 
-			if !found_open do panic("unmatched closing parenthesis")
+			if !found_open {
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"unmatched closing parenthesis",
+					should_panic = true,
+				)
+			}
 			expecting_op = true // closed paren acts like a completed operand
 
 		case tokens.Open_Bracket:
@@ -292,15 +351,47 @@ parse_expression :: proc(
 
 	for !stack.is_empty(&operator_stack) {
 		top, _ := stack.peek(&operator_stack)
-		if _, ok := top.token.kind.(tokens.Open_Paren); ok do panic("unmatched parenthesis")
-		if _, ok := top.token.kind.(tokens.Close_Paren); ok do panic("unmatched parenthesis")
+		if _, ok := top.token.kind.(tokens.Open_Paren); ok {
+			error.print_error(
+				tokenizer.source,
+				top.token.span,
+				err_name,
+				"unmatched parenthesis",
+				should_panic = true,
+			)
+		}
+		if _, ok := top.token.kind.(tokens.Close_Paren); ok {
+			error.print_error(
+				tokenizer.source,
+				top.token.span,
+				err_name,
+				"unmatched parenthesis",
+				should_panic = true,
+			)
+		}
 
-		apply_operator(&operator_stack, &operand_stack, arena)
+		apply_operator(&operator_stack, &operand_stack, arena, tokenizer)
 	}
 
 	result, ok := stack.pop(&operand_stack)
-	if !ok do panic("expected expression")
-	if !stack.is_empty(&operand_stack) do panic("malformed expression: too many operands")
+	if !ok {
+		error.print_error(
+			tokenizer.source,
+			tokens.Span{},
+			err_name,
+			"expected expression",
+			should_panic = true,
+		)
+	}
+	if !stack.is_empty(&operand_stack) {
+		error.print_error(
+			tokenizer.source,
+			tokens.Span{},
+			err_name,
+			"malformed expression: too many operands",
+			should_panic = true,
+		)
+	}
 
 	return result
 }

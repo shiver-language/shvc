@@ -16,6 +16,7 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "tokens"
@@ -25,6 +26,8 @@ parse_postfix_expr :: proc(
 	arena: runtime.Allocator,
 	base: ^ast.Spanned_AST,
 ) -> ^ast.Spanned_AST {
+	err_name :: "postfix expression error"
+
 	result := base
 
 	for {
@@ -34,9 +37,16 @@ parse_postfix_expr :: proc(
 		case tokens.Dot:
 			next_token(tokenizer, arena) // consume .
 
-			field_tok, ok := next_token(tokenizer, arena).kind.(tokens.Identifier)
+			field_tok_spanned := next_token(tokenizer, arena)
+			field_tok, ok := field_tok_spanned.kind.(tokens.Identifier)
 			if !ok {
-				panic("expected identifier after '.'")
+				error.print_error(
+					tokenizer.source,
+					field_tok_spanned.span,
+					err_name,
+					"expected identifier after '.'",
+					should_panic = true,
+				)
 			}
 
 			// method call expr.name()
@@ -58,7 +68,13 @@ parse_postfix_expr :: proc(
 						case tokens.Close_Paren:
 							break
 						case:
-							panic("expected ',' or ')' in method argument list")
+							error.print_error(
+								tokenizer.source,
+								sep.span,
+								err_name,
+								"expected ',' or ')' in method argument list",
+								should_panic = true,
+							)
 						}
 
 						break
@@ -119,8 +135,15 @@ parse_postfix_expr :: proc(
 					end = parse_expression(tokenizer, arena)
 				}
 
-				if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-					panic("expected ']' after slice expression")
+				close_tok := next_token(tokenizer, arena)
+				if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+					error.print_error(
+						tokenizer.source,
+						close_tok.span,
+						err_name,
+						"expected ']' after slice expression",
+						should_panic = true,
+					)
 				}
 
 				node := new(ast.AST_Node, arena)
@@ -152,8 +175,15 @@ parse_postfix_expr :: proc(
 					end = parse_expression(tokenizer, arena)
 				}
 
-				if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-					panic("expected ']' after slice expression")
+				close_tok := next_token(tokenizer, arena)
+				if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+					error.print_error(
+						tokenizer.source,
+						close_tok.span,
+						err_name,
+						"expected ']' after slice expression",
+						should_panic = true,
+					)
 				}
 
 				node := new(ast.AST_Node, arena)
@@ -172,8 +202,15 @@ parse_postfix_expr :: proc(
 				continue
 			}
 
-			if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-				panic("expected ']' after index expression")
+			close_tok := next_token(tokenizer, arena)
+			if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+				error.print_error(
+					tokenizer.source,
+					close_tok.span,
+					err_name,
+					"expected ']' after index expression",
+					should_panic = true,
+				)
 			}
 
 			node := new(ast.AST_Node, arena)

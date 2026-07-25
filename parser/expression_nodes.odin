@@ -16,6 +16,7 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "stack"
@@ -26,7 +27,9 @@ Op_Item :: struct {
 	is_unary: bool,
 }
 
-precedence :: proc(item: Op_Item) -> u8 {
+precedence :: proc(item: Op_Item, tokenizer: ^Tokenizer) -> u8 {
+	err_name :: "precedence error"
+
 	if item.is_unary {
 		return 6 // high precedence
 	}
@@ -49,13 +52,23 @@ precedence :: proc(item: Op_Item) -> u8 {
 	case tokens.Ampersand, tokens.Caret:
 		return 6
 	}
-	panic("precedence input token not an operator") // TODO: proper error handling
+	error.print_error(
+		tokenizer.source,
+		item.token.span,
+		err_name,
+		"precedence input token not an operator",
+		should_panic = true,
+	)
+	return 0
 }
 
 create_leaf_node :: proc(
 	token: tokens.Spanned_Token,
 	alloc: runtime.Allocator,
+	tokenizer: ^Tokenizer,
 ) -> ^ast.Spanned_AST { 	// alloc should be in the arena
+	err_name :: "leaf node error"
+
 	node := new(ast.Spanned_AST, alloc)
 	node.span = token.span
 	#partial switch t in token.kind {
@@ -84,7 +97,14 @@ create_leaf_node :: proc(
 		return node
 
 	case:
-		panic("expected an identifier or literal")
+		error.print_error(
+			tokenizer.source,
+			token.span,
+			err_name,
+			"expected an identifier or literal",
+			should_panic = true,
+		)
+		return nil
 	}
 }
 
@@ -128,13 +148,32 @@ apply_operator :: proc(
 	operator_stack: ^stack.Stack(Op_Item),
 	operand_stack: ^stack.Stack(^ast.Spanned_AST),
 	arena: runtime.Allocator,
+	tokenizer: ^Tokenizer,
 ) {
+	err_name :: "expression error"
+
 	op_item, ostack_ok := stack.pop(operator_stack)
-	if !ostack_ok do panic("missing operator")
+	if !ostack_ok {
+		error.print_error(
+			tokenizer.source,
+			tokens.Span{},
+			err_name,
+			"missing operator",
+			should_panic = true,
+		)
+	}
 
 	if op_item.is_unary {
 		operand, ostack_u_ok := stack.pop(operand_stack)
-		if !ostack_u_ok do panic("missing unary operand")
+		if !ostack_u_ok {
+			error.print_error(
+				tokenizer.source,
+				op_item.token.span,
+				err_name,
+				"missing unary operand",
+				should_panic = true,
+			)
+		}
 
 		stack.push(operand_stack, create_unary_node(op_item.token, operand, arena))
 		return
@@ -157,7 +196,15 @@ apply_operator :: proc(
 		right, rok := stack.pop(operand_stack)
 		left, lok := stack.pop(operand_stack)
 
-		if !rok || !lok do panic("missing binary operand")
+		if !rok || !lok {
+			error.print_error(
+				tokenizer.source,
+				op_item.token.span,
+				err_name,
+				"missing binary operand",
+				should_panic = true,
+			)
+		}
 
 		stack.push(operand_stack, create_binary_node(left, op_item.token, right, arena))
 	case:

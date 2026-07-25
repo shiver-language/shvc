@@ -16,12 +16,15 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "stack"
 import "tokens"
 
 parse_program :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "syntax error"
+
 	scope_stack := stack.make_stack(^ast.Spanned_AST, context.temp_allocator)
 
 	root_block := make_block(arena)
@@ -36,7 +39,7 @@ parse_program :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.S
 	stack.push(&scope_stack, root_block_node)
 
 	for {
-		status := parse_statement_into_current_scope(tokenizer, arena, &scope_stack, true)
+		status, _ := parse_statement_into_current_scope(tokenizer, arena, &scope_stack, true)
 
 		if status == .Done {
 			break
@@ -44,7 +47,16 @@ parse_program :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.S
 	}
 
 	if scope_stack.len > 1 {
-		panic("missing closing bracket")
+		unclosed, ok := stack.peek(&scope_stack)
+		if ok {
+			error.print_error(
+				tokenizer.source,
+				unclosed.span,
+				err_name,
+				"missing closing bracket for block",
+				should_panic = true,
+			)
+		}
 	}
 
 	root.span = tokens.Span {
