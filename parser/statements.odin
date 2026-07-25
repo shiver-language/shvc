@@ -32,10 +32,7 @@ parse_statement_into_current_scope :: proc(
 	arena: runtime.Allocator,
 	scope_stack: ^stack.Stack(^ast.Spanned_AST),
 	is_root: bool,
-) -> (
-	Parse_Status,
-	^ast.Spanned_AST,
-) {
+) -> Parse_Status {
 	err_name :: "statement error"
 
 	token := next_token(tokenizer, arena)
@@ -52,11 +49,11 @@ parse_statement_into_current_scope :: proc(
 			)
 		}
 
-		return .Done, nil
+		return .Done
 	}
 
 	if _, scok := token.kind.(tokens.Semi_Colon); scok {
-		return .Continue, nil
+		return .Continue
 	}
 
 	current_scope, stackok := stack.peek(scope_stack)
@@ -93,8 +90,6 @@ parse_statement_into_current_scope :: proc(
 			)
 		}
 
-		return .Continue, fn_node
-
 	case tokens.Struct:
 		structure := parse_struct_signature(tokenizer, arena)
 
@@ -106,7 +101,6 @@ parse_statement_into_current_scope :: proc(
 		}
 
 		add_statement_to_block(current_scope, struct_node)
-		return .Continue, struct_node
 
 	case tokens.Trait:
 		trait_decl := parse_trait_decl(tokenizer, arena)
@@ -115,7 +109,6 @@ parse_statement_into_current_scope :: proc(
 			end   = tokenizer.cursor,
 		}
 		add_statement_to_block(current_scope, trait_decl)
-		return .Continue, trait_decl
 
 	case tokens.Open_Bracket:
 		new_block := make_block(arena)
@@ -127,7 +120,6 @@ parse_statement_into_current_scope :: proc(
 
 		add_statement_to_block(current_scope, block_node)
 		stack.push(scope_stack, block_node)
-		return .Continue, block_node
 
 	case tokens.Close_Bracket:
 		if scope_stack.len <= 1 {
@@ -143,12 +135,11 @@ parse_statement_into_current_scope :: proc(
 
 			block, ok := stack.pop(scope_stack)
 			block.span.end = token.span.end
-			return .Done, block
+			return .Done
 		}
 
 		block, ok := stack.pop(scope_stack)
 		block.span.end = token.span.end
-		return .Continue, block
 
 	case tokens.Identifier,
 	     tokens.Int_Literal,
@@ -160,13 +151,11 @@ parse_statement_into_current_scope :: proc(
 		unget_token(tokenizer, token)
 		expr := parse_expression(tokenizer, arena)
 		add_statement_to_block(current_scope, expr)
-		return .Continue, expr
 
 	case tokens.Val, tokens.Mut:
 		unget_token(tokenizer, token)
 		var_node := parse_var_decl(tokenizer, arena)
 		add_statement_to_block(current_scope, var_node)
-		return .Continue, var_node
 
 	case tokens.Defer:
 		defer_node := new(ast.Spanned_AST, arena)
@@ -203,8 +192,6 @@ parse_statement_into_current_scope :: proc(
 			add_statement_to_block(current_scope, defer_node)
 		}
 
-		return .Continue, defer_node
-
 	case tokens.Return:
 		ret_node := new(ast.Spanned_AST, arena)
 		expr: ^ast.Spanned_AST = nil
@@ -227,7 +214,6 @@ parse_statement_into_current_scope :: proc(
 			end   = tokenizer.cursor,
 		}
 		add_statement_to_block(current_scope, ret_node)
-		return .Continue, ret_node
 
 	case tokens.Continue:
 		continue_node := new(ast.Spanned_AST, arena)
@@ -237,7 +223,6 @@ parse_statement_into_current_scope :: proc(
 			end   = tokenizer.cursor,
 		}
 		add_statement_to_block(current_scope, continue_node)
-		return .Continue, continue_node
 
 	case tokens.Break:
 		break_node := new(ast.Spanned_AST, arena)
@@ -247,7 +232,6 @@ parse_statement_into_current_scope :: proc(
 			end   = tokenizer.cursor,
 		}
 		add_statement_to_block(current_scope, break_node)
-		return .Continue, break_node
 
 	case tokens.If:
 		if_node := parse_if_statement(tokenizer, arena)
@@ -256,7 +240,6 @@ parse_statement_into_current_scope :: proc(
 			end   = if_node.span.end,
 		}
 		add_statement_to_block(current_scope, if_node)
-		return .Continue, if_node
 
 	case tokens.For:
 		for_node := parse_for_statement(tokenizer, arena)
@@ -265,7 +248,6 @@ parse_statement_into_current_scope :: proc(
 			end   = for_node.span.end,
 		}
 		add_statement_to_block(current_scope, for_node)
-		return .Continue, for_node
 
 	case:
 		error.print_error(
@@ -277,7 +259,7 @@ parse_statement_into_current_scope :: proc(
 		)
 	}
 
-	return .Continue, nil
+	return .Continue
 }
 
 parse_single_statement_after_do :: proc(
