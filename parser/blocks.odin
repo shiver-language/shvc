@@ -47,18 +47,18 @@ make_block_node :: proc(
 
 add_statement_to_block :: proc(block: ^ast.Spanned_AST, statement: ^ast.Spanned_AST) {
 	if block == nil || statement == nil {
-		panic("nil block or statement")
+		panic("internal parser error: nil block or statement in add_statement_to_block")
 	}
 
 	block_node, ok := block.kind.(ast.Block)
 	if !ok {
-		panic("block.kind must be a Block AST node")
+		panic("internal parser error: block.kind must be a Block node")
 	}
 
-	if (block.span.start > statement.span.start) {
+	if block.span.start > statement.span.start {
 		block.span.start = statement.span.start
 	}
-	if (block.span.end < statement.span.end) {
+	if block.span.end < statement.span.end {
 		block.span.end = statement.span.end
 	}
 	append(block_node.items, statement)
@@ -81,7 +81,8 @@ parse_block_body :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^as
 	}
 
 	if scope_stack.len != 0 {
-		panic("internal parser error: block parser ended with non-empty scope stack")
+		panic("internal parser error: block parser ended with non empty scope stack")
 	}
+
 	return make_block_node(root_block, tokens.Span{start = start, end = tokenizer.cursor}, arena)
 }

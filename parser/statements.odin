@@ -33,12 +33,20 @@ parse_statement_into_current_scope :: proc(
 	scope_stack: ^stack.Stack(^ast.Spanned_AST),
 	is_root: bool,
 ) -> Parse_Status {
+	err_name :: "statement error"
+
 	token := next_token(tokenizer, arena)
 	start := token.span.start
 
 	if _, eofok := token.kind.(tokens.Eof); eofok {
 		if !is_root {
-			panic("unexpected EOF inside block")
+			error.print_error(
+				tokenizer.source,
+				token.span,
+				err_name,
+				"unexpected EOF inside block",
+				should_panic = true,
+			)
 		}
 
 		return .Done
@@ -73,7 +81,13 @@ parse_statement_into_current_scope :: proc(
 			fn.kind.(ast.Fn_Decl).body.span = bracket_tkn.span
 			stack.push(scope_stack, fn.kind.(ast.Fn_Decl).body)
 		} else {
-			panic("expected function body")
+			error.print_error(
+				tokenizer.source,
+				bracket_tkn.span,
+				err_name,
+				"expected function body",
+				should_panic = true,
+			)
 		}
 
 	case tokens.Struct:
@@ -110,7 +124,13 @@ parse_statement_into_current_scope :: proc(
 	case tokens.Close_Bracket:
 		if scope_stack.len <= 1 {
 			if is_root {
-				panic("unexpected closing bracket")
+				error.print_error(
+					tokenizer.source,
+					token.span,
+					err_name,
+					"unexpected closing bracket",
+					should_panic = true,
+				)
 			}
 
 			block, ok := stack.pop(scope_stack)
@@ -230,7 +250,13 @@ parse_statement_into_current_scope :: proc(
 		add_statement_to_block(current_scope, for_node)
 
 	case:
-		panic("unexpected token at statement level")
+		error.print_error(
+			tokenizer.source,
+			token.span,
+			err_name,
+			"unexpected token at statement level",
+			should_panic = true,
+		)
 	}
 
 	return .Continue
@@ -240,6 +266,8 @@ parse_single_statement_after_do :: proc(
 	tokenizer: ^Tokenizer,
 	arena: runtime.Allocator,
 ) -> ^ast.Spanned_AST {
+	err_name :: "do statement error"
+
 	token := next_token(tokenizer, arena)
 	start := token.span.start
 
@@ -279,8 +307,15 @@ parse_single_statement_after_do :: proc(
 	case tokens.Defer:
 		defer_node := new(ast.Spanned_AST, arena)
 
-		if _, is_block := peek_token(tokenizer, arena).kind.(tokens.Open_Bracket); is_block {
-			panic("block defer is not allowed after 'do'; use 'if cond { defer { ... } }'")
+		peek_tok := peek_token(tokenizer, arena)
+		if _, is_block := peek_tok.kind.(tokens.Open_Bracket); is_block {
+			error.print_error(
+				tokenizer.source,
+				peek_tok.span,
+				err_name,
+				"block defer is not allowed after 'do'; use 'if cond { defer { ... } }'",
+				should_panic = true,
+			)
 		}
 
 		expr := parse_expression(tokenizer, arena)
@@ -295,13 +330,21 @@ parse_single_statement_after_do :: proc(
 		return defer_node
 
 	case:
-		panic("expected statement after do")
+		error.print_error(
+			tokenizer.source,
+			token.span,
+			err_name,
+			"expected statement after 'do'",
+			should_panic = true,
+		)
 	}
 
-	panic("unreachable") // im going to crash out if we hit this
+	panic("unreachable")
 }
 
 parse_if_body :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "if statement error"
+
 	next := next_token(tokenizer, arena)
 
 	#partial switch _ in next.kind {
@@ -312,13 +355,21 @@ parse_if_body :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.S
 		return parse_single_statement_after_do(tokenizer, arena)
 
 	case:
-		panic("expected '{' or 'do' after if condition")
+		error.print_error(
+			tokenizer.source,
+			next.span,
+			err_name,
+			"expected '{' or 'do' after if condition",
+			should_panic = true,
+		)
 	}
 
 	panic("unreachable")
 }
 
 parse_if_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "if statement error"
+
 	span_start_tkn := make([dynamic]^tokens.Span, arena)
 	conditions := make([dynamic]^ast.Spanned_AST, arena)
 	bodies := make([dynamic]^ast.Spanned_AST, arena)
@@ -369,7 +420,13 @@ parse_if_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 			final_else = parse_single_statement_after_do(tokenizer, arena)
 
 		case:
-			panic("expected '{', 'do', or 'if' after 'else'")
+			error.print_error(
+				tokenizer.source,
+				next.span,
+				err_name,
+				"expected '{', 'do', or 'if' after 'else'",
+				should_panic = true,
+			)
 		}
 
 		break
@@ -407,6 +464,8 @@ parse_if_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^
 }
 
 parse_for_body :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "for loop error"
+
 	next := next_token(tokenizer, arena)
 
 	#partial switch _ in next.kind {
@@ -417,7 +476,13 @@ parse_for_body :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.
 		return parse_single_statement_after_do(tokenizer, arena)
 
 	case:
-		panic("expected '{' or 'do' after for loop header")
+		error.print_error(
+			tokenizer.source,
+			next.span,
+			err_name,
+			"expected '{' or 'do' after for loop header",
+			should_panic = true,
+		)
 	}
 
 	panic("unreachable")
@@ -438,6 +503,8 @@ next_is_open_bracket :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) ->
 }
 
 parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_name :: "for loop error"
+
 	node := new(ast.Spanned_AST, arena)
 	for_start := tokenizer.cursor
 	// for { ... }
@@ -461,11 +528,12 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 	if _, is_mut := next.kind.(tokens.Mut); is_mut {
 		init := parse_var_decl(tokenizer, arena)
 
-		if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
+		sc_tok := next_token(tokenizer, arena)
+		if _, ok := sc_tok.kind.(tokens.Semi_Colon); !ok {
 			error.print_error(
 				tokenizer.source,
-				init.span,
-				"for loop error",
+				sc_tok.span,
+				err_name,
 				"expected ';' after for-loop initializer",
 				should_panic = true,
 			)
@@ -476,8 +544,15 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 			condition = parse_expression(tokenizer, arena)
 		}
 
-		if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
-			panic("expected ';' after for-loop condition")
+		sc_tok2 := next_token(tokenizer, arena)
+		if _, ok := sc_tok2.kind.(tokens.Semi_Colon); !ok {
+			error.print_error(
+				tokenizer.source,
+				sc_tok2.span,
+				err_name,
+				"expected ';' after for-loop condition",
+				should_panic = true,
+			)
 		}
 
 		post: ^ast.Spanned_AST = nil
@@ -505,8 +580,15 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 	if _, is_val := next.kind.(tokens.Val); is_val {
 		init := parse_var_decl(tokenizer, arena)
 
-		if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
-			panic("expected ';' after for-loop initializer")
+		sc_tok := next_token(tokenizer, arena)
+		if _, ok := sc_tok.kind.(tokens.Semi_Colon); !ok {
+			error.print_error(
+				tokenizer.source,
+				sc_tok.span,
+				err_name,
+				"expected ';' after for-loop initializer",
+				should_panic = true,
+			)
 		}
 
 		condition: ^ast.Spanned_AST = nil
@@ -514,8 +596,15 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 			condition = parse_expression(tokenizer, arena)
 		}
 
-		if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
-			panic("expected ';' after for-loop condition")
+		sc_tok2 := next_token(tokenizer, arena)
+		if _, ok := sc_tok2.kind.(tokens.Semi_Colon); !ok {
+			error.print_error(
+				tokenizer.source,
+				sc_tok2.span,
+				err_name,
+				"expected ';' after for-loop condition",
+				should_panic = true,
+			)
 		}
 
 		post: ^ast.Spanned_AST = nil
@@ -542,20 +631,40 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 	first_spanned := next_token(tokenizer, arena)
 	first_tok, first_ok := first_spanned.kind.(tokens.Identifier)
 	if !first_ok {
-		panic("expected '{', variable declaration, or iterator name after 'for'")
+		error.print_error(
+			tokenizer.source,
+			first_spanned.span,
+			err_name,
+			"expected '{', variable declaration, or iterator name after 'for'",
+			should_panic = true,
+		)
 	}
 
 	// for i, index in array { ... }
 	if _, has_comma := peek_token(tokenizer, arena).kind.(tokens.Comma); has_comma {
 		next_token(tokenizer, arena) // consume comma
 
-		index_tok, index_ok := next_token(tokenizer, arena).kind.(tokens.Identifier)
+		index_spanned := next_token(tokenizer, arena)
+		index_tok, index_ok := index_spanned.kind.(tokens.Identifier)
 		if !index_ok {
-			panic("expected index identifier after ',' in for-in loop")
+			error.print_error(
+				tokenizer.source,
+				index_spanned.span,
+				err_name,
+				"expected index identifier after ',' in for-in loop",
+				should_panic = true,
+			)
 		}
 
-		if _, in_ok := next_token(tokenizer, arena).kind.(tokens.In); !in_ok {
-			panic("expected 'in' after for iterator variables")
+		in_spanned := next_token(tokenizer, arena)
+		if _, in_ok := in_spanned.kind.(tokens.In); !in_ok {
+			error.print_error(
+				tokenizer.source,
+				in_spanned.span,
+				err_name,
+				"expected 'in' after for iterator variables",
+				should_panic = true,
+			)
 		}
 
 		iter_expr := parse_expression(tokenizer, arena, false)
@@ -597,23 +706,36 @@ parse_for_statement :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 
 	// for i = 0; i < 10; i += 1 { ... }
 	// we have consumed first identifier
-	// put it bacck and parse
+	// put it back and parse
 	unget_token(tokenizer, first_spanned)
 
 	init := parse_expression(tokenizer, arena)
 
-	if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
-		panic("expected ';' after for-loop initializer or 'in' for iterator loop")
+	sc_tok1 := next_token(tokenizer, arena)
+	if _, ok := sc_tok1.kind.(tokens.Semi_Colon); !ok {
+		error.print_error(
+			tokenizer.source,
+			sc_tok1.span,
+			err_name,
+			"expected ';' after for-loop initializer or 'in' for iterator loop",
+			should_panic = true,
+		)
 	}
 
 	condition: ^ast.Spanned_AST = nil
 	if _, is_sc := peek_token(tokenizer, arena).kind.(tokens.Semi_Colon); !is_sc {
-		// ?
 		condition = parse_expression(tokenizer, arena)
 	}
 
-	if _, ok := next_token(tokenizer, arena).kind.(tokens.Semi_Colon); !ok {
-		panic("expected ';' after for-loop condition")
+	sc_tok2 := next_token(tokenizer, arena)
+	if _, ok := sc_tok2.kind.(tokens.Semi_Colon); !ok {
+		error.print_error(
+			tokenizer.source,
+			sc_tok2.span,
+			err_name,
+			"expected ';' after for-loop condition",
+			should_panic = true,
+		)
 	}
 
 	post: ^ast.Spanned_AST = nil

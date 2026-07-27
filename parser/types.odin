@@ -16,6 +16,7 @@
 
 package parser
 
+import "../error"
 import "base:runtime"
 import types "stock_types"
 import "tokens"
@@ -46,6 +47,8 @@ parse_type_from_identifier :: proc(name: string) -> types.Types {
 }
 
 parse_type :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> types.Types {
+	err_name :: "type parser error"
+
 	token := next_token(tokenizer, arena)
 
 	#partial switch t in token.kind {
@@ -69,8 +72,15 @@ parse_type :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> types.Typ
 			// [?]i32
 			next_token(tokenizer, arena)
 
-			if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-				panic("expected ']' after '?' in array type")
+			close_tok := next_token(tokenizer, arena)
+			if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+				error.print_error(
+					tokenizer.source,
+					close_tok.span,
+					err_name,
+					"expected ']' after '?' in array type",
+					should_panic = true,
+				)
 			}
 
 			count_kind = .Infer
@@ -80,13 +90,26 @@ parse_type :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> types.Typ
 			if nt.content == "dynamic" {
 				next_token(tokenizer, arena)
 
-				if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-					panic("expected ']' after dynamic in array type")
+				close_tok := next_token(tokenizer, arena)
+				if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+					error.print_error(
+						tokenizer.source,
+						close_tok.span,
+						err_name,
+						"expected ']' after 'dynamic' in array type",
+						should_panic = true,
+					)
 				}
 
 				count_kind = .Dynamic
 			} else {
-				panic("expected array count, '?', 'dynamic', or ']'")
+				error.print_error(
+					tokenizer.source,
+					next.span,
+					err_name,
+					"expected array count, '?', 'dynamic', or ']'",
+					should_panic = true,
+				)
 			}
 
 		case tokens.Int_Literal:
@@ -94,19 +117,38 @@ parse_type :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> types.Typ
 			next_token(tokenizer, arena)
 
 			if nt.content < 0 {
-				panic("array count cannot be negative")
+				error.print_error(
+					tokenizer.source,
+					next.span,
+					err_name,
+					"array count cannot be negative",
+					should_panic = true,
+				)
 			}
 
 			count = int(nt.content)
 
-			if _, ok := next_token(tokenizer, arena).kind.(tokens.Close_SB); !ok {
-				panic("expected ']' after array count")
+			close_tok := next_token(tokenizer, arena)
+			if _, ok := close_tok.kind.(tokens.Close_SB); !ok {
+				error.print_error(
+					tokenizer.source,
+					close_tok.span,
+					err_name,
+					"expected ']' after array count",
+					should_panic = true,
+				)
 			}
 
 			count_kind = .Fixed
 
 		case:
-			panic("expected array count, '?', 'dynamic', or ']'")
+			error.print_error(
+				tokenizer.source,
+				next.span,
+				err_name,
+				"expected array count, '?', 'dynamic', or ']'",
+				should_panic = true,
+			)
 		}
 
 		elem_type := parse_type(tokenizer, arena)
@@ -121,6 +163,14 @@ parse_type :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> types.Typ
 		return parse_type_from_identifier(t.content)
 
 	case:
-		panic("expected a valid type identifier or type modifier")
+		error.print_error(
+			tokenizer.source,
+			token.span,
+			err_name,
+			"expected a valid type identifier or type modifier",
+			should_panic = true,
+		)
 	}
+
+	panic("unreachable")
 }

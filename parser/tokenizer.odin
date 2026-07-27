@@ -16,8 +16,8 @@
 
 package parser
 
+import "../error"
 import "base:runtime"
-import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:unicode"
@@ -25,7 +25,7 @@ import "core:unicode/utf8"
 import "tokens"
 
 Tokenizer :: struct {
-	source:       string, // path
+	source:       string, // source code content
 	cursor:       int, // byte offset
 	peeked_token: tokens.Spanned_Token,
 	has_peeked:   bool,
@@ -38,6 +38,7 @@ new_tokenizer :: proc(allocator: runtime.Allocator) -> ^Tokenizer {
 inject_src :: proc(tokenizer: ^Tokenizer, src: string) {
 	tokenizer.source = src
 	tokenizer.cursor = 0
+	tokenizer.has_peeked = false
 }
 
 peek :: proc(tokenizer: ^Tokenizer) -> rune {
@@ -87,8 +88,17 @@ spanned :: proc(tokenizer: ^Tokenizer, start: int, kind: tokens.Token) -> tokens
 }
 
 scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> tokens.Spanned_Token {
+	err_name :: "lexical error"
+
+	comment_start := tokenizer.cursor
 	if !skip_whitespace_and_comments(tokenizer) {
-		panic("unterminated block comment")
+		error.print_error(
+			tokenizer.source,
+			tokens.Span{start = comment_start, end = tokenizer.cursor},
+			err_name,
+			"unterminated block comment",
+			should_panic = true,
+		)
 	}
 
 	start := tokenizer.cursor
@@ -132,7 +142,14 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 			advance(tokenizer, 2)
 			return spanned(tokenizer, start, tokens.Not_Equal{})
 		}
-		panic("unexpected character: !")
+		advance(tokenizer)
+		error.print_error(
+			tokenizer.source,
+			tokens.Span{start = start, end = tokenizer.cursor},
+			err_name,
+			"unexpected character '!'",
+			should_panic = true,
+		)
 	case ',':
 		advance(tokenizer)
 		return spanned(tokenizer, start, tokens.Comma{})
@@ -195,13 +212,20 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 	case '"':
 		advance(tokenizer) // consume opening quote
 		b := strings.builder_make(context.temp_allocator)
+		defer strings.builder_destroy(&b)
 
 		for !is_at_end(tokenizer) && peek(tokenizer) != '"' {
 			c := peek(tokenizer)
 			if c == '\\' {
 				advance(tokenizer) // consume \
 				if is_at_end(tokenizer) {
-					panic("unterminated escape sequence")
+					error.print_error(
+						tokenizer.source,
+						tokens.Span{start = start, end = tokenizer.cursor},
+						err_name,
+						"unterminated escape sequence in string literal",
+						should_panic = true,
+					)
 				}
 
 				escaped_char := peek(tokenizer)
@@ -228,7 +252,13 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 		}
 
 		if is_at_end(tokenizer) {
-			panic("unclosed string literal")
+			error.print_error(
+				tokenizer.source,
+				tokens.Span{start = start, end = tokenizer.cursor},
+				err_name,
+				"unclosed string literal",
+				should_panic = true,
+			)
 		}
 		advance(tokenizer) // consume closing quote
 
@@ -246,7 +276,15 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 			advance(tokenizer)
 		}
 
-		if is_at_end(tokenizer) do panic("unterminated raw string literal")
+		if is_at_end(tokenizer) {
+			error.print_error(
+				tokenizer.source,
+				tokens.Span{start = start, end = tokenizer.cursor},
+				err_name,
+				"unterminated raw string literal",
+				should_panic = true,
+			)
+		}
 
 		raw_str := tokenizer.source[raw_start:tokenizer.cursor]
 		advance(tokenizer) // consume closing backtick
@@ -313,15 +351,16 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 		is_float := false
 
 		for !is_at_end(tokenizer) &&
-		    (unicode.is_digit(peek(tokenizer)) || (!is_float && peek(tokenizer) == '_')) {
+		    (unicode.is_digit(peek(tokenizer)) || peek(tokenizer) == '_') {
 			advance(tokenizer)
 		}
 
 		if !is_at_end(tokenizer) && peek(tokenizer) == '.' {
-			if nxt, ok := peek_next(tokenizer); ok && unicode.is_digit(nxt) {
+			if nxt, ok := peek_next(tokenizer); ok && (unicode.is_digit(nxt) || nxt == '_') {
 				is_float = true
 				advance(tokenizer) // eat period .
-				for !is_at_end(tokenizer) && unicode.is_digit(peek(tokenizer)) {
+				for !is_at_end(tokenizer) &&
+				    (unicode.is_digit(peek(tokenizer)) || peek(tokenizer) == '_') {
 					advance(tokenizer)
 				}
 			}
@@ -335,9 +374,11 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 				advance(tokenizer)
 			}
 
-			if !is_at_end(tokenizer) && unicode.is_digit(peek(tokenizer)) {
+			if !is_at_end(tokenizer) &&
+			   (unicode.is_digit(peek(tokenizer)) || peek(tokenizer) == '_') {
 				is_float = true
-				for !is_at_end(tokenizer) && unicode.is_digit(peek(tokenizer)) {
+				for !is_at_end(tokenizer) &&
+				    (unicode.is_digit(peek(tokenizer)) || peek(tokenizer) == '_') {
 					advance(tokenizer)
 				}
 			} else {
@@ -346,20 +387,45 @@ scan_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> token
 		}
 
 		num_str := tokenizer.source[num_start:tokenizer.cursor]
+		clean_num_str, _ := strings.remove_all(num_str, "_", context.temp_allocator)
 
 		if is_float {
-			val, ok := strconv.parse_f32(num_str)
-			if !ok do panic("fail to parse float")
+			val, ok := strconv.parse_f32(clean_num_str)
+			if !ok {
+				error.print_error(
+					tokenizer.source,
+					tokens.Span{start = num_start, end = tokenizer.cursor},
+					err_name,
+					"failed to parse float literal",
+					should_panic = true,
+				)
+			}
 			return spanned(tokenizer, num_start, tokens.Float_Literal{val})
 		} else {
-			val, ok := strconv.parse_int(num_str)
-			if !ok do panic("fail to parse int")
+			val, ok := strconv.parse_int(clean_num_str)
+			if !ok {
+				error.print_error(
+					tokenizer.source,
+					tokens.Span{start = num_start, end = tokenizer.cursor},
+					err_name,
+					"failed to parse integer literal",
+					should_panic = true,
+				)
+			}
 			return spanned(tokenizer, num_start, tokens.Int_Literal{cast(i32)val})
 		}
 	}
 
-	fmt.println("unexpected character:", char)
-	panic("unexpected character")
+	advance(tokenizer)
+	error.print_error(
+		tokenizer.source,
+		tokens.Span{start = start, end = tokenizer.cursor},
+		err_name,
+		"unexpected character",
+		should_panic = true,
+	)
+
+	return spanned(tokenizer, start, tokens.Eof{})
 }
 
 next_token :: proc(tokenizer: ^Tokenizer, allocator: runtime.Allocator) -> tokens.Spanned_Token {

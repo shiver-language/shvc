@@ -16,11 +16,14 @@
 
 package parser
 
+import "../error"
 import "ast"
 import "base:runtime"
 import "tokens"
 
 parse_array_literal :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> ^ast.Spanned_AST {
+	err_msg :: "array literal error"
+
 	start_token := peek_token(tokenizer, arena)
 	items_ptr := new([dynamic]^ast.Spanned_AST, arena)
 	items_ptr^ = make([dynamic]^ast.Spanned_AST, arena)
@@ -47,7 +50,13 @@ parse_array_literal :: proc(tokenizer: ^Tokenizer, arena: runtime.Allocator) -> 
 				break
 
 			case:
-				panic("expected ',' or '}' in array literal")
+				error.print_error(
+					tokenizer.source,
+					sep.span,
+					err_msg,
+					"expected ',' or '}' in array literal",
+					should_panic = true,
+				)
 			}
 
 			break
@@ -70,6 +79,8 @@ parse_struct_literal :: proc(
 	arena: runtime.Allocator,
 	first_token: tokens.Spanned_Token,
 ) -> ^ast.Spanned_AST {
+	err_msg :: "struct literal error"
+
 	fields_ptr := new([dynamic]ast.Spanned_AST, arena)
 	fields_ptr^ = make([dynamic]ast.Spanned_AST, arena)
 
@@ -105,12 +116,24 @@ parse_struct_literal :: proc(
 			ident_tok := next_token(tokenizer, arena)
 			ident, is_ident := ident_tok.kind.(tokens.Identifier)
 			if !is_ident {
-				panic("expected field name identifier in struct literal")
+				error.print_error(
+					tokenizer.source,
+					ident_tok.span,
+					err_msg,
+					"expected field name identifier in struct literal",
+					should_panic = true,
+				)
 			}
 
 			colon_tok := next_token(tokenizer, arena)
 			if _, is_colon := colon_tok.kind.(tokens.Colon); !is_colon {
-				panic("expected ':' following field name identifier in struct literal")
+				error.print_error(
+					tokenizer.source,
+					colon_tok.span,
+					err_msg,
+					"expected ':' following field name identifier in struct literal",
+					should_panic = true,
+				)
 			}
 
 			val_expr := parse_expression(tokenizer, arena)
@@ -131,7 +154,13 @@ parse_struct_literal :: proc(
 			break
 
 		case:
-			panic("expected ',' or '}' in struct literal definition")
+			error.print_error(
+				tokenizer.source,
+				sep.span,
+				err_msg,
+				"expected ',' or '}' in struct literal definition",
+				should_panic = true,
+			)
 		}
 		break
 	}
@@ -188,6 +217,8 @@ parse_struct_literal_with_type :: proc(
 	first_token: tokens.Spanned_Token,
 	type_node: ^ast.Spanned_AST,
 ) -> ^ast.Spanned_AST {
+	err_msg :: "struct literal error"
+
 	fields_ptr := new([dynamic]ast.Spanned_AST, arena)
 	fields_ptr^ = make([dynamic]ast.Spanned_AST, arena)
 
@@ -222,11 +253,25 @@ parse_struct_literal_with_type :: proc(
 
 			ident_tok := next_token(tokenizer, arena)
 			ident, is_ident := ident_tok.kind.(tokens.Identifier)
-			if !is_ident do panic("expected field name identifier in struct literal")
+			if !is_ident {
+				error.print_error(
+					tokenizer.source,
+					ident_tok.span,
+					err_msg,
+					"expected field name identifier in struct literal",
+					should_panic = true,
+				)
+			}
 
 			colon_tok := next_token(tokenizer, arena)
 			if _, is_colon := colon_tok.kind.(tokens.Colon); !is_colon {
-				panic("expected ':' following field name identifier in struct literal")
+				error.print_error(
+					tokenizer.source,
+					colon_tok.span,
+					err_msg,
+					"expected ':' following field name identifier in struct literal",
+					should_panic = true,
+				)
 			}
 
 			val_expr := parse_expression(tokenizer, arena)
@@ -246,7 +291,13 @@ parse_struct_literal_with_type :: proc(
 			break
 
 		case:
-			panic("expected ',' or '}' in struct literal definition")
+			error.print_error(
+				tokenizer.source,
+				sep.span,
+        err_msg,
+				"expected ',' or '}' in struct literal definition",
+				should_panic = true,
+			)
 		}
 		break
 	}
